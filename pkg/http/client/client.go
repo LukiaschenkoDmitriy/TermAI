@@ -6,14 +6,24 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/response"
 )
+
+type APIError struct {
+	Error struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+	} `json:"error"`
+}
 
 type Client struct {
 	APIKey string
 	Model string
-	Rules []string
+	systemMessage map[string]any
 }
 
 const (
@@ -24,11 +34,17 @@ func New() *Client {
 	config := config.New();
 	config.Load();
 
-	return &Client{
+	client := &Client{
 		APIKey: config.Settings.APIKey,
 		Model:  config.Settings.Model,
-		Rules:  config.Settings.Rules,
 	}
+
+	client.systemMessage = map[string]any{
+		"role": "system",
+		"content": strings.Join(config.Settings.Rules, "\n"),
+	}
+
+	return client
 }
 
 func (c * Client) ConvertMessages(messages []string) []map[string]any {
@@ -42,11 +58,11 @@ func (c * Client) ConvertMessages(messages []string) []map[string]any {
 	return convertedMessages
 }
 
-func (c *Client) SendRequest(messages []string) ([]byte, error) {
+func (c *Client) SendRequest(messages []string) (*response.Response, error) {
 	requestBody := make(map[string]any)	
 	
 	requestBody["model"] = c.Model
-	requestBody["store"] = false
+	requestBody["store"] = true
 	requestBody["messages"] = c.ConvertMessages(messages);
 
 	jsonBody, err := json.Marshal(requestBody)
@@ -74,5 +90,17 @@ func (c *Client) SendRequest(messages []string) ([]byte, error) {
 		return nil, err
 	}
 
-	return body, nil
+	// Check for API errors
+	if resp.StatusCode != http.StatusOK {
+		var apiError APIError
+		if err := json.Unmarshal(body, &apiError); err != nil {
+			return nil, fmt.Errorf("failed to parse error response: %v", err)
+		}
+		return nil, fmt.Errorf("API error: %s (type: %s, code: %s)", 
+			apiError.Error.Message, 
+			apiError.Error.Type, 
+			apiError.Error.Code)
+	}
+
+	return response.ParseResponse(body)
 }

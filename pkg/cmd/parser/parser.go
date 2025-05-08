@@ -62,7 +62,7 @@ func (parser *CMDParser) Init() {
 	parser.ExecuteCMD.Run = parser.ExecuteRun
 }
 
-func (parser* CMDParser) ConfigRun(cmd *cobra.Command, args []string) {
+func (parser *CMDParser) ConfigRun(cmd *cobra.Command, args []string) {
 	cfg := config.New()
 	if err := cfg.Load(); err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -89,7 +89,7 @@ func (parser* CMDParser) ConfigRun(cmd *cobra.Command, args []string) {
 	}
 }
 
-func (parser* CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
+func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 	parser.AddRulesToMessage(parser.Config.Settings.Rules)
 
 	response, err := parser.client.SendRequest([]string{parser.LastMessage})
@@ -138,12 +138,12 @@ func (parser* CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 	}
 }
 
-func (parser* CMDParser) AddRulesToMessage(rules []string) {
+func (parser *CMDParser) AddRulesToMessage(rules []string) {
 	for _, rule := range rules {
 		parser.LastMessage += fmt.Sprintf("Rule: %s\n", rule)
 	}
 }
 
-func (parser* CMDParser) Execute() error {
+func (parser *CMDParser) Execute() error {
 	return parser.RootCMD.Execute();
 }
