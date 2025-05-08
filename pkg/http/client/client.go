@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,10 @@ type Client struct {
 	Rules []string
 }
 
+const (
+	OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+)
+
 func New() *Client {
 	config := config.New();
 	config.Load();
@@ -26,10 +31,30 @@ func New() *Client {
 	}
 }
 
-func (c *Client) SendRequest(requestBody []byte) ([]byte, error) {
-	url := "https://api.openai.com/v1/chat/completions"
+func (c * Client) ConvertMessages(messages []string) []map[string]any {
+	convertedMessages := make([]map[string]any, len(messages))
+	for i, message := range messages {
+		convertedMessages[i] = map[string]any{
+			"role": "user",
+			"content": message,
+		}
+	}
+	return convertedMessages
+}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+func (c *Client) SendRequest(messages []string) ([]byte, error) {
+	requestBody := make(map[string]any)	
+	
+	requestBody["model"] = c.Model
+	requestBody["store"] = false
+	requestBody["messages"] = c.ConvertMessages(messages);
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", OPENAI_URL, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
