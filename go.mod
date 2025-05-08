@@ -1,4 +1,4 @@
-module github.com/dmytrii/termai
+module github.com/LukiaschenkoDmitriy/TermAI
 
 go 1.21
 

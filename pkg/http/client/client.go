@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/dmytrii/termai/pkg/config"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
 )
 
 type Client struct {

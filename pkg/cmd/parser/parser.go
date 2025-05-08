@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/dmytrii/termai/pkg/config"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
 	"github.com/spf13/cobra"
 )
 

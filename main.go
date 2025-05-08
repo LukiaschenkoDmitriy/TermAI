@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/dmytrii/termai/pkg/cmd/parser"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/cmd/parser"
 )
 
 func main() {
