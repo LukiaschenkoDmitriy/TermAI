@@ -16,7 +16,7 @@ func TestParseResponse(t *testing.T) {
 		"choices": [
 			{
 				"message": {
-					"content": "```json\n{\"answer\": \"Test response\", \"commands\": [\"echo test\"], \"error\": \"\"}\n```"
+					"content": "{\"answer\": \"Test response\", \"commands\": [\"echo test\"], \"error\": \"\"}"
 				}
 			}
 		]
@@ -63,7 +63,7 @@ func TestParseResponse_Content(t *testing.T) {
 		"choices": [
 			{
 				"message": {
-					"content": "```json\n{\"answer\": \"Test response\", \"commands\": [\"echo test1\", \"echo test2\"], \"error\": \"\"}\n```"
+					"content": "{\"answer\": \"Test response\", \"commands\": [\"echo test1\", \"echo test2\"], \"error\": \"\"}"
 				}
 			}
 		]
@@ -83,7 +83,7 @@ func TestParseResponse_Content(t *testing.T) {
 		"choices": [
 			{
 				"message": {
-					"content": "```json\n{\"answer\": \"\", \"commands\": [], \"error\": \"Test error\"}\n```"
+					"content": "{\"answer\": \"\", \"commands\": [], \"error\": \"Test error\"}"
 				}
 			}
 		]
