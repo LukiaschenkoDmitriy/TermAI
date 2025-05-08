@@ -62,7 +62,7 @@ func (c *Client) SendRequest(messages []string) (*response.Response, error) {
 	requestBody := make(map[string]any)	
 	
 	requestBody["model"] = c.Model
-	requestBody["store"] = true
+	requestBody["store"] = false
 	requestBody["messages"] = c.ConvertMessages(messages);
 
 	jsonBody, err := json.Marshal(requestBody)
