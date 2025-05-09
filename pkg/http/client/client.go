@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/history"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/response"
 )
 
@@ -20,10 +21,16 @@ type APIError struct {
 	} `json:"error"`
 }
 
+type Message struct {
+	Role string `json:"role"`
+	Content string `json:"content"`
+}
+
 type Client struct {
 	APIKey string
 	Model string
-	systemMessage map[string]any
+	Messages []Message
+	History history.History
 }
 
 const (
@@ -34,36 +41,54 @@ func New() *Client {
 	config := config.New();
 	config.Load();
 
+	history := history.New();
+	history.Load();
+
 	client := &Client{
 		APIKey: config.Settings.APIKey,
 		Model:  config.Settings.Model,
+		Messages: []Message{},
+		History: *history,
 	}
 
-	client.systemMessage = map[string]any{
-		"role": "system",
-		"content": strings.Join(config.Settings.Rules, "\n"),
+	client.AddMessages("system", []string{strings.Join(config.Settings.Rules, "\n")});
+
+	historyMessages := make([]Message, len(client.History.Messages) * 2)
+	for i, message := range client.History.Messages {
+		historyMessages[i] = Message{
+			Role: message.UserMessage.Role,
+			Content: "\n Executed Commands:" + message.CommandOutput + message.UserMessage.Content,
+		}
+		historyMessages[i + len(client.History.Messages)] = Message{
+			Role: message.AIMessage.Role,
+			Content: message.AIMessage.Content,
+		}
 	}
+
+	client.Messages = append(historyMessages, client.Messages...)
 
 	return client
 }
 
-func (c * Client) ConvertMessages(messages []string) []map[string]any {
-	convertedMessages := make([]map[string]any, len(messages))
-	for i, message := range messages {
-		convertedMessages[i] = map[string]any{
-			"role": "user",
-			"content": message,
-		}
+func (c * Client) AddMessages(role string,messages []string) {
+	for _, message := range messages {
+		c.Messages = append(c.Messages, Message{
+			Role: role,
+			Content: message,
+		})
 	}
-	return convertedMessages
 }
 
 func (c *Client) SendRequest(messages []string) (*response.Response, error) {
-	requestBody := make(map[string]any)	
+	requestBody := make(map[string]any)
+
+	messages = []string{strings.Join(messages, "\n")};
+
+	c.AddMessages("user", messages);
 	
 	requestBody["model"] = c.Model
 	requestBody["store"] = false
-	requestBody["messages"] = c.ConvertMessages(messages);
+	requestBody["messages"] = c.Messages
 
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
@@ -90,7 +115,6 @@ func (c *Client) SendRequest(messages []string) (*response.Response, error) {
 		return nil, err
 	}
 
-	// Check for API errors
 	if resp.StatusCode != http.StatusOK {
 		var apiError APIError
 		if err := json.Unmarshal(body, &apiError); err != nil {
@@ -102,5 +126,11 @@ func (c *Client) SendRequest(messages []string) (*response.Response, error) {
 			apiError.Error.Code)
 	}
 
-	return response.ParseResponse(body)
+	response, err := response.ParseResponse(body)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
 }

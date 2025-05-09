@@ -45,7 +45,7 @@ func (c *Config) saveDefault() error {
 
 func (c *Config) Load() error {
 	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
+	viper.SetConfigType("json")
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -53,7 +53,7 @@ func (c *Config) Load() error {
 	}
 
 	configPath := filepath.Join(home, ".termai")
-	c.ConfigPath = filepath.Join(configPath, "config.yaml")
+	c.ConfigPath = filepath.Join(configPath, "config.json")
 
 	if err := os.MkdirAll(configPath, 0755); err != nil {
 		return err

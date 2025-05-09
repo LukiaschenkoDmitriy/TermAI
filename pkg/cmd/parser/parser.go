@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/history"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/client"
 	"github.com/spf13/cobra"
 )
@@ -15,9 +16,11 @@ import (
 type CMDParser struct {
 	Config *config.Config
 	LastMessage string
+	Clear bool
 	RootCMD *cobra.Command
 	ConfigCMD *cobra.Command
 	ExecuteCMD *cobra.Command
+	HistoryCMD *cobra.Command
 	client *client.Client
 }
 
@@ -42,6 +45,10 @@ func New() *CMDParser {
 			Use:   "execute",
 			Short: "Execute TermAI",
 		},
+		HistoryCMD: &cobra.Command{
+			Use:   "history",
+			Short: "Show history",
+		},
 	}
 
 	parser.client = client.New()
@@ -52,14 +59,17 @@ func New() *CMDParser {
 func (parser *CMDParser) Init() {
 	parser.RootCMD.AddCommand(parser.ConfigCMD);
 	parser.RootCMD.AddCommand(parser.ExecuteCMD);
+	parser.RootCMD.AddCommand(parser.HistoryCMD);
 
 	parser.ConfigCMD.Flags().StringVar(&parser.Config.Settings.APIKey, "api_key", "", "Set API key")
 	parser.ConfigCMD.Flags().StringVar(&parser.Config.Settings.Model, "model", "", "Set model")
 
 	parser.ExecuteCMD.Flags().StringVar(&parser.LastMessage, "message", "", "Message")
+	parser.HistoryCMD.Flags().BoolVar(&parser.Clear, "clear", false, "Clear history")
 
 	parser.ConfigCMD.Run = parser.ConfigRun
 	parser.ExecuteCMD.Run = parser.ExecuteRun
+	parser.HistoryCMD.Run = parser.HistoryRun
 }
 
 func (parser *CMDParser) ConfigRun(cmd *cobra.Command, args []string) {
@@ -89,6 +99,14 @@ func (parser *CMDParser) ConfigRun(cmd *cobra.Command, args []string) {
 	}
 }
 
+func (parser *CMDParser) HistoryRun(cmd *cobra.Command, args []string) {
+	if (parser.Clear) {
+		history :=history.New()
+		history.Load()
+		history.ClearHistory()
+	}
+}
+
 func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 	parser.AddRulesToMessage(parser.Config.Settings.Rules)
 
@@ -97,10 +115,6 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to send request: %v", err)
 	}
 
-	// Debug: Print raw content with escaped characters
-	fmt.Printf("Raw content (with escapes): %q\n", response.Choices[0].Message.Content)
-
-	// Remove markdown code block markers
 	content := response.Choices[0].Message.Content
 	content = strings.TrimPrefix(content, "```json\n")
 	content = strings.TrimSuffix(content, "\n```")
@@ -119,23 +133,37 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 
 	fmt.Println(parsedContent.Answer)
 
+	var allOutput string
+
 	if len(parsedContent.Commands) > 0 {
-		fmt.Println("\nExecuting commands:")
 		for _, cmd := range parsedContent.Commands {
 			cmd = strings.Replace(cmd, "echo '", "echo \"", -1)
 			cmd = strings.Replace(cmd, "' >", "\" >", -1)
 			cmd = strings.Replace(cmd, "' >>", "\" >>", -1)
 
 			fmt.Printf("\nExecuting: %s\n", cmd)
+			allOutput += fmt.Sprintf("Executing: %s\n", cmd)
 			execCmd := exec.Command("bash", "-c", cmd)
 			output, err := execCmd.CombinedOutput()
 			if err != nil {
 				fmt.Printf("Error executing command: %v\n", err)
+				allOutput += fmt.Sprintf("Error:\n%s\n", output)
 				continue
 			}
-			fmt.Printf("Output:\n%s\n", output)
+
+			if (len(output) > 0) {
+				fmt.Printf("Output:\n%s\n", output)
+				allOutput += fmt.Sprintf("Output:\n%s\n", output)
+			}
 		}
 	}
+
+	lastMessage := parser.client.Messages[len(parser.client.Messages)-1]
+
+	parser.client.History.AddMessage(history.ClientMessage{
+		Role: lastMessage.Role,
+		Content: lastMessage.Content,
+	}, response.Choices[0].Message, allOutput)
 }
 
 func (parser *CMDParser) AddRulesToMessage(rules []string) {
