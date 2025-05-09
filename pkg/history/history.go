@@ -77,6 +77,16 @@ func (h *History) saveDefault() error {
 	return viper.WriteConfigAs(h.ConfigPath)
 }
 
+func (h *History) IsSystemRulesExists() bool {
+	for _, message := range h.Messages {
+		if message.UserMessage.Role == "system" {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (h *History) AddMessage(userMessage ClientMessage, aiMessage response.Message, commandOutput string) error {
 	h.Messages = append(h.Messages, Message{
 		UserMessage: userMessage,
@@ -89,16 +99,6 @@ func (h *History) AddMessage(userMessage ClientMessage, aiMessage response.Messa
 		return err
 	}
 	return nil
-}
-
-func (h *History) IsSystemRulesExists() bool {
-	for _, message := range h.Messages {
-		if message.UserMessage.Role == "system" {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (h *History) ClearHistory() error {

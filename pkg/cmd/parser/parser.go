@@ -10,6 +10,7 @@ import (
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/history"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/client"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/response"
 	"github.com/spf13/cobra"
 )
 
@@ -100,15 +101,25 @@ func (parser *CMDParser) ConfigRun(cmd *cobra.Command, args []string) {
 }
 
 func (parser *CMDParser) HistoryRun(cmd *cobra.Command, args []string) {
+	history :=history.New()
+	history.Load()
 	if (parser.Clear) {
-		history :=history.New()
-		history.Load()
 		history.ClearHistory()
+	} else {
+		if (len(history.Messages) > 0) {
+			for _, message := range history.Messages {
+				fmt.Printf("[%s] %s\n", message.UserMessage.Role, message.UserMessage.Content)
+				fmt.Printf("[%s] %s\n", message.AIMessage.Role, message.AIMessage.Content)
+				fmt.Printf("[%s] %s\n", message.CommandOutput, message.CommandOutput)
+			}
+		} else {
+			fmt.Println("[TermAI] : History is empty")
+		}
 	}
 }
 
 func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
-	parser.AddRulesToMessage(parser.Config.Settings.Rules)
+	parser.AddRulesToHistoryIfNotExists(parser.Config.Settings.Rules)
 
 	response, err := parser.client.SendRequest([]string{parser.LastMessage})
 	if err != nil {
@@ -131,7 +142,7 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 		log.Fatal("Exiting due to parsing error")
 	}
 
-	fmt.Println(parsedContent.Answer)
+	fmt.Println("[TermAI]: " + parsedContent.Answer);
 
 	var allOutput string
 
@@ -166,9 +177,15 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 	}, response.Choices[0].Message, allOutput)
 }
 
-func (parser *CMDParser) AddRulesToMessage(rules []string) {
-	for _, rule := range rules {
-		parser.LastMessage += fmt.Sprintf("Rule: %s\n", rule)
+func (parser *CMDParser) AddRulesToHistoryIfNotExists(rules []string) {
+	if (!parser.client.History.IsSystemRulesExists()) {
+		parser.client.History.AddMessage(history.ClientMessage{
+			Role: "system",
+			Content: fmt.Sprintf("system: %s", strings.Join(rules, "\n")),
+		}, response.Message{
+			Role: "system",
+			Content: "",
+		}, "")
 	}
 }
 

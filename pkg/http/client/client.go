@@ -41,36 +41,43 @@ func New() *Client {
 	config := config.New();
 	config.Load();
 
-	history := history.New();
-	history.Load();
+	historyCfg := history.New();
+	historyCfg.Load();
 
 	client := &Client{
 		APIKey: config.Settings.APIKey,
 		Model:  config.Settings.Model,
 		Messages: []Message{},
-		History: *history,
+		History: *historyCfg,
 	}
 
-	client.AddMessages("system", []string{strings.Join(config.Settings.Rules, "\n")});
+	return client
+}
 
-	historyMessages := make([]Message, len(client.History.Messages) * 2)
-	for i, message := range client.History.Messages {
+func (c *Client) ConvertHistoryToMessages() []Message {
+	historyMessages := make([]Message, len(c.History.Messages) * 2)
+
+	for i, message := range c.History.Messages {
+		additionalContext := "";
+
+		if (len(message.CommandOutput) > 0) {
+			additionalContext = "\n Executed Commands:" + message.CommandOutput;
+		}
+
 		historyMessages[i] = Message{
 			Role: message.UserMessage.Role,
-			Content: "\n Executed Commands:" + message.CommandOutput + message.UserMessage.Content,
+			Content: additionalContext + message.UserMessage.Content,
 		}
-		historyMessages[i + len(client.History.Messages)] = Message{
+		historyMessages[i + len(c.History.Messages)] = Message{
 			Role: message.AIMessage.Role,
 			Content: message.AIMessage.Content,
 		}
 	}
 
-	client.Messages = append(historyMessages, client.Messages...)
-
-	return client
+	return historyMessages;
 }
 
-func (c * Client) AddMessages(role string,messages []string) {
+func (c *Client) AddMessages(role string,messages []string) {
 	for _, message := range messages {
 		c.Messages = append(c.Messages, Message{
 			Role: role,
@@ -88,7 +95,7 @@ func (c *Client) SendRequest(messages []string) (*response.Response, error) {
 	
 	requestBody["model"] = c.Model
 	requestBody["store"] = false
-	requestBody["messages"] = c.Messages
+	requestBody["messages"] = append(c.ConvertHistoryToMessages(), c.Messages...)
 
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
