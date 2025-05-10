@@ -55,6 +55,7 @@ func New() *Client {
 }
 
 func (c *Client) ConvertHistoryToMessages() []Message {
+	c.History.Load()
 	historyMessages := make([]Message, len(c.History.Messages) * 2)
 
 	for i, message := range c.History.Messages {
