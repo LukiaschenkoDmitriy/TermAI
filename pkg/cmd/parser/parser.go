@@ -1,16 +1,12 @@
 package parser
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os/exec"
-	"strings"
 
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/history"
-	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/client"
-	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/response"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/openai"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +18,7 @@ type CMDParser struct {
 	ConfigCMD *cobra.Command
 	ExecuteCMD *cobra.Command
 	HistoryCMD *cobra.Command
-	client *client.Client
+	openai *openai.OpenAI
 }
 
 func New() *CMDParser {
@@ -51,8 +47,7 @@ func New() *CMDParser {
 			Short: "Show history",
 		},
 	}
-
-	parser.client = client.New()
+	parser.openai = openai.New()
 
 	return parser
 }
@@ -119,73 +114,54 @@ func (parser *CMDParser) HistoryRun(cmd *cobra.Command, args []string) {
 }
 
 func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
-	parser.AddRulesToHistoryIfNotExists(parser.Config.Settings.Rules)
+	parser.openai.AddRulesToHistoryIfNotExists(parser.Config.Settings.Rules)
 
-	response, err := parser.client.SendRequest([]string{parser.LastMessage})
+	response, err := parser.openai.SendMessage(parser.LastMessage)
 	if err != nil {
 		log.Fatalf("Failed to send request: %v", err)
 	}
 
-	content := response.Choices[0].Message.Content
-	content = strings.TrimPrefix(content, "```json\n")
-	content = strings.TrimSuffix(content, "\n```")
-
-	var parsedContent struct {
-		Answer   string   `json:"answer"`
-		Commands []string `json:"commands"`
-		Error    string   `json:"error"`
+	answer, commands, errMsg, err := parser.openai.ProcessResponse(response)
+	if err != nil {
+		log.Fatalf("Failed to process response: %v", err)
 	}
 
-	if err := json.Unmarshal([]byte(content), &parsedContent); err != nil {
-		log.Printf("Failed to parse content. Error: %v\n", err)
-		log.Printf("Content that caused error: %s\n", content)
-		log.Fatal("Exiting due to parsing error")
+	if errMsg != "" {
+		log.Printf("Warning: %s", errMsg)
 	}
 
-	fmt.Println("[TermAI]: " + parsedContent.Answer);
+	fmt.Println("[TermAI]: " + answer)
 
-	var allOutput string
+	context := ""
+	for len(commands) > 0 && commands[0] == "more_information" {
+		allOutput := parser.openai.ExecuteCommands(commands[1:], false)
+		
+		context += fmt.Sprintf("\nCommand output:\n%s", allOutput)
+		parser.openai.AddToHistory("", response, context)
 
-	if len(parsedContent.Commands) > 0 {
-		for _, cmd := range parsedContent.Commands {
-			cmd = strings.Replace(cmd, "echo '", "echo \"", -1)
-			cmd = strings.Replace(cmd, "' >", "\" >", -1)
-			cmd = strings.Replace(cmd, "' >>", "\" >>", -1)
-
-			fmt.Printf("\nExecuting: %s\n", cmd)
-			allOutput += fmt.Sprintf("Executing: %s\n", cmd)
-			execCmd := exec.Command("bash", "-c", cmd)
-			output, err := execCmd.CombinedOutput()
-			if err != nil {
-				fmt.Printf("Error executing command: %v\n", err)
-				allOutput += fmt.Sprintf("Error:\n%s\n", output)
-				continue
-			}
-
-			if (len(output) > 0) {
-				fmt.Printf("Output:\n%s\n", output)
-				allOutput += fmt.Sprintf("Output:\n%s\n", output)
-			}
+		moreInfoResponse, err := parser.openai.HandleMoreInformation(commands[1:], context)
+		parser.openai.AddToHistory("", moreInfoResponse, context)
+		if err != nil {
+			log.Printf("Failed to get more information: %v", err)
+			return
 		}
+
+		answer, commands, errMsg, err = parser.openai.ProcessResponse(moreInfoResponse)
+		if err != nil {
+			log.Printf("Failed to process additional information: %v", err)
+			return
+		}
+
+		if errMsg != "" {
+			log.Printf("Warning: %s", errMsg)
+		}
+
+		fmt.Println("[TermAI]: " + answer)
 	}
 
-	lastMessage := parser.client.Messages[len(parser.client.Messages)-1]
-
-	parser.client.History.AddMessage(history.ClientMessage{
-		Role: lastMessage.Role,
-		Content: lastMessage.Content,
-	}, response.Choices[0].Message, allOutput)
-}
-
-func (parser *CMDParser) AddRulesToHistoryIfNotExists(rules []string) {
-	if (!parser.client.History.IsSystemRulesExists()) {
-		parser.client.History.AddMessage(history.ClientMessage{
-			Role: "system",
-			Content: fmt.Sprintf("system: %s", strings.Join(rules, "\n")),
-		}, response.Message{
-			Role: "system",
-			Content: "",
-		}, "")
+	if len(commands) > 0 {
+		allOutput := parser.openai.ExecuteCommands(commands, true)
+		parser.openai.AddToHistory(parser.LastMessage, response, allOutput)
 	}
 }
 
