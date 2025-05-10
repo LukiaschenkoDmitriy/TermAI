@@ -114,6 +114,10 @@ func (parser *CMDParser) HistoryRun(cmd *cobra.Command, args []string) {
 }
 
 func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
+	parser.ExecuteLogic()
+}
+
+func (parser *CMDParser) ExecuteLogic() {
 	parser.openai.AddRulesToHistoryIfNotExists(parser.Config.Settings.Rules)
 
 	response, err := parser.openai.SendMessage(parser.LastMessage)
@@ -134,10 +138,15 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 
 	context := ""
 	for len(commands) > 0 && commands[0] == "more_information" {
-		allOutput := parser.openai.ExecuteCommands(commands[1:], false)
-		
+		allOutput, err := parser.openai.ExecuteCommands(commands[1:])
 		context += fmt.Sprintf("\nCommand output:\n%s", allOutput)
 		parser.openai.AddToHistory("", response, context)
+
+		if err != nil {
+			parser.LastMessage = "Error, use 'more_information' to collect information: " + allOutput
+			parser.ExecuteLogic()
+			return
+		}
 
 		moreInfoResponse, err := parser.openai.HandleMoreInformation(commands[1:], context)
 		parser.openai.AddToHistory("", moreInfoResponse, context)
@@ -159,9 +168,14 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 		fmt.Println("[TermAI]: " + answer)
 	}
 
-	if len(commands) > 0 {
-		allOutput := parser.openai.ExecuteCommands(commands, true)
-		parser.openai.AddToHistory(parser.LastMessage, response, allOutput)
+	allOutput, err := parser.openai.ExecuteCommands(commands)
+
+	parser.openai.AddToHistory(parser.LastMessage, response, allOutput)
+
+	if err != nil {
+		parser.LastMessage = "Error, use 'more_information' to collect information: " + allOutput
+		parser.ExecuteLogic()
+		return
 	}
 }
 
