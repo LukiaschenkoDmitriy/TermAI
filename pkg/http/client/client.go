@@ -59,23 +59,24 @@ func (c *Client) ConvertHistoryToMessages() []Message {
 	historyMessages := make([]Message, len(c.History.Messages) * 2)
 
 	for i, message := range c.History.Messages {
-		additionalContext := "";
+		additionalContext := ""
 
-		if (len(message.CommandOutput) > 0) {
-			additionalContext = "\n Executed Commands:" + message.CommandOutput;
+		if len(message.CommandOutput) > 0 {
+			additionalContext = "\n Executed Commands:" + message.CommandOutput
 		}
 
-		historyMessages[i] = Message{
-			Role: message.UserMessage.Role,
+		historyMessages[i*2] = Message{
+			Role:    message.UserMessage.Role,
 			Content: additionalContext + message.UserMessage.Content,
 		}
-		historyMessages[i + len(c.History.Messages)] = Message{
-			Role: message.AIMessage.Role,
+		
+		historyMessages[i*2+1] = Message{
+			Role:    message.AIMessage.Role,
 			Content: message.AIMessage.Content,
 		}
 	}
 
-	return historyMessages;
+	return historyMessages
 }
 
 func (c *Client) AddMessages(role string,messages []string) {

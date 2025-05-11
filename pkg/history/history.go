@@ -101,6 +101,27 @@ func (h *History) AddMessage(userMessage ClientMessage, aiMessage response.Messa
 	return nil
 }
 
+func (h *History) AddContext(context string) error {
+	h.Messages = append(h.Messages, Message{
+		UserMessage: ClientMessage{
+			Role: "system",
+			Content: context,
+		},
+		AIMessage: response.Message{
+			Role: "system",
+			Content: "",
+		},
+		CommandOutput: context,
+	})
+
+	viper.Set("history", h.Messages)
+	if err := viper.WriteConfigAs(h.ConfigPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+
 func (h *History) ClearHistory() error {
 	h.Messages = []Message{}
 	viper.Set("history", h.Messages)

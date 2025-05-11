@@ -125,55 +125,33 @@ func (parser *CMDParser) ExecuteLogic() {
 		log.Fatalf("Failed to send request: %v", err)
 	}
 
-	answer, commands, errMsg, err := parser.openai.ProcessResponse(response)
+	openaiResponse, err := parser.openai.ProcessResponse(response)
 	if err != nil {
 		log.Fatalf("Failed to process response: %v", err)
 	}
 
-	if errMsg != "" {
-		log.Printf("Warning: %s", errMsg)
+	if openaiResponse.Error != "" {
+		log.Printf("Warning: %s", openaiResponse.Error)
 	}
 
-	fmt.Println("[TermAI]: " + answer)
+	fmt.Println("[TermAI]: " + openaiResponse.Answer)
 
-	context := ""
-	for len(commands) > 0 && commands[0] == "more_information" {
-		allOutput, err := parser.openai.ExecuteCommands(commands[1:])
-		context += fmt.Sprintf("\nCommand output:\n%s", allOutput)
-		parser.openai.AddToHistory("", response, context)
+	allOutput, err := parser.openai.ExecuteCommands(openaiResponse.Commands, openaiResponse.CDTo)
 
-		if err != nil {
-			parser.LastMessage = "Error, use 'more_information' to collect information: " + allOutput
-			parser.ExecuteLogic()
-			return
-		}
+	parser.openai.AddToHistory(response, allOutput)
 
-		moreInfoResponse, err := parser.openai.HandleMoreInformation(commands[1:], context)
-		parser.openai.AddToHistory("", moreInfoResponse, context)
-		if err != nil {
-			log.Printf("Failed to get more information: %v", err)
-			return
-		}
-
-		answer, commands, errMsg, err = parser.openai.ProcessResponse(moreInfoResponse)
-		if err != nil {
-			log.Printf("Failed to process additional information: %v", err)
-			return
-		}
-
-		if errMsg != "" {
-			log.Printf("Warning: %s", errMsg)
-		}
-
-		fmt.Println("[TermAI]: " + answer)
+	if (openaiResponse.NeedUserInput) {
+		return;
 	}
-
-	allOutput, err := parser.openai.ExecuteCommands(commands)
-
-	parser.openai.AddToHistory(parser.LastMessage, response, allOutput)
 
 	if err != nil {
-		parser.LastMessage = "Error, use 'more_information' to collect information: " + allOutput
+		parser.LastMessage = "System: " + allOutput
+		parser.ExecuteLogic()
+		return
+	}
+
+	if (!openaiResponse.Finished) {
+		parser.LastMessage = "Output: " + allOutput
 		parser.ExecuteLogic()
 		return
 	}
