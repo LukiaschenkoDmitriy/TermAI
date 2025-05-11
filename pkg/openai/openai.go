@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/history"
@@ -18,6 +17,15 @@ type OpenAI struct {
 	Client   *client.Client
 }
 
+type OpenAIResponse struct {
+	Answer string `json:"answer"`
+	Commands []string `json:"commands"`
+	Finished bool `json:"finished"`
+	Error string `json:"error"`
+	NeedUserInput bool `json:"need_user_input"`
+	CDTo string `json:"cd_to"`
+}
+
 func New() *OpenAI {
 	return &OpenAI{
 		Client: client.New(),
@@ -28,41 +36,32 @@ func (o *OpenAI) SendMessage(message string) (*response.Response, error) {
 	return o.Client.SendRequest([]string{message})
 }
 
-func (o *OpenAI) ProcessResponse(response *response.Response) (string, []string, string, error) {
+func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, error) {
 	content := response.Choices[0].Message.Content
 	content = strings.TrimPrefix(content, "```json\n")
 	content = strings.TrimSuffix(content, "\n```")
 
-	var parsedContent struct {
-		Answer   string   `json:"answer"`
-		Commands []string `json:"commands"`
-		Error    string   `json:"error"`
-	}
+	var parsedContent OpenAIResponse
 
 	if err := json.Unmarshal([]byte(content), &parsedContent); err != nil {
 		log.Printf("Failed to parse content. Error: %v\n", err)
 		log.Printf("Content that caused error: %s\n", content)
 		
-		// Базове очищення
 		content = strings.ReplaceAll(content, "\n", " ")
 		content = strings.ReplaceAll(content, "\r", "")
 		content = strings.TrimSpace(content)
 
-		// Виправлення структури JSON
 		content = strings.ReplaceAll(content, "}\",\"answer", ",\"answer")
 		content = strings.ReplaceAll(content, "}\",\"error", ",\"error")
 		content = strings.ReplaceAll(content, "}\",\"commands", ",\"commands")
+		content = strings.ReplaceAll(content, "}\",\"cd_to", ",\"cd_to")
 		
-		// Видалення зайвих лапок навколо масивів
 		content = strings.ReplaceAll(content, "\"[", "[")
 		content = strings.ReplaceAll(content, "]\"", "]")
 		
-		// Виправлення проблем з комами
 		content = strings.ReplaceAll(content, ",,", ",")
 		content = strings.ReplaceAll(content, ",\"}", "}")
 		content = strings.ReplaceAll(content, ",\"}", "}")
-		
-		log.Printf("Cleaned content for retry: %s\n", content)
 		
 		if err := json.Unmarshal([]byte(content), &parsedContent); err != nil {
 			commandsStart := strings.Index(content, "\"commands\":[")
@@ -102,53 +101,66 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (string, []string,
 					formattedCommands = append(formattedCommands, fmt.Sprintf("\"%s\"", escapedCmd))
 				}
 				
-				newContent := fmt.Sprintf(`{"answer":"","commands":[%s],"error":""}`, strings.Join(formattedCommands, ","))
+				cdTo := ""
+				if cdToStart := strings.Index(content, "\"cd_to\":"); cdToStart != -1 {
+					cdToValueStart := cdToStart + 7
+					cdToValueEnd := strings.Index(content[cdToValueStart:], "\"")
+					if cdToValueEnd != -1 {
+						cdToValueEnd = cdToValueStart + cdToValueEnd
+						cdTo = content[cdToValueStart:cdToValueEnd]
+					}
+				}
+				
+				newContent := fmt.Sprintf(`{"answer":"","commands":[%s],"error":"","cd_to":"%s"}`, strings.Join(formattedCommands, ","), cdTo)
 				log.Printf("Created new JSON: %s\n", newContent)
 				
 				if err := json.Unmarshal([]byte(newContent), &parsedContent); err != nil {
-					return "", nil, "", fmt.Errorf("failed to parse response after reconstruction: %v", err)
+					return OpenAIResponse{}, fmt.Errorf("failed to parse response after reconstruction: %v", err)
 				}
 			} else {
-				return "", nil, "", fmt.Errorf("failed to find commands in response")
+				return OpenAIResponse{}, fmt.Errorf("failed to find commands in response")
 			}
 		}
 	}
 
-	return parsedContent.Answer, parsedContent.Commands, parsedContent.Error, nil
+	return parsedContent, nil
 }
 
-func (o *OpenAI) ExecuteCommands(commands []string) (string, error) {
+func (o *OpenAI) ReplaceCommandsFormat(commands []string) []string {
+	for i, cmd := range commands {
+		commands[i] = strings.Replace(cmd, "echo '", "echo \"", -1)
+		commands[i] = strings.Replace(cmd, "' >", "\" >", -1)
+		commands[i] = strings.Replace(cmd, "' >>", "\" >>", -1)
+	}
+
+	return commands
+}
+
+func (o *OpenAI) ExecuteCommands(commands []string, dir string) (string, error) {
 	var allOutput string
 	var errorCmd error
-	currentDir := ""
+
+	commands = o.ReplaceCommandsFormat(commands)
 
 	if len(commands) > 0 {
 		for _, cmd := range commands {
-			cmd = strings.Replace(cmd, "echo '", "echo \"", -1)
-			cmd = strings.Replace(cmd, "' >", "\" >", -1)
-			cmd = strings.Replace(cmd, "' >>", "\" >>", -1)
-
-			if strings.HasPrefix(strings.TrimSpace(cmd), "cd ") {
-				newDir := strings.TrimSpace(strings.TrimPrefix(cmd, "cd "))
-				newDir = strings.Trim(newDir, "\"'")
-				
-				if !strings.HasPrefix(newDir, "/") && currentDir != "" {
-					newDir = filepath.Join(currentDir, newDir)
-				}
-				
-				currentDir = newDir
-				fmt.Printf("\nChanging directory to: %s\n", currentDir)
-				continue
+			if strings.HasPrefix(cmd, "cd") {
+				allOutput += "System: Command 'cd ...' is not available, use 'cd_to' field to specify working directory.\n"
+				return allOutput, fmt.Errorf("command not available")
 			}
 
-			fmt.Printf("\nExecuting in %s: %s\n", currentDir, cmd)
+			showFullOutput := false
+			if strings.HasPrefix(cmd, "*") {
+				showFullOutput = true
+				cmd = strings.TrimPrefix(cmd, "*")
+			}
 
-			allOutput += fmt.Sprintf("Executing in %s: %s\n", currentDir, cmd)
-			
 			execCmd := exec.Command("bash", "-c", cmd)
-			if currentDir != "" {
-				execCmd.Dir = currentDir
+
+			if dir != "" {
+				execCmd.Dir = dir
 			}
+
 			output, err := execCmd.CombinedOutput()
 			
 			if err != nil {
@@ -161,12 +173,16 @@ func (o *OpenAI) ExecuteCommands(commands []string) (string, error) {
 					allOutput += fmt.Sprintf("Error: %v\nOutput: %s\n", err, string(output))
 					fmt.Printf("Error: %v\nOutput: %s\n", err, string(output))
 				}
-				break;
+				break
 			}
 
 			if len(output) > 0 {
+				if showFullOutput {
+					allOutput += fmt.Sprintf("Command output:\n%s\n", output)
+				} else {
+					allOutput += fmt.Sprintf("Command %s was successfully executed\n", cmd)
+				}
 				fmt.Printf("Output:\n%s\n", output)
-				allOutput += fmt.Sprintf("Output:\n%s\n", output)
 			}
 		}
 	}
@@ -174,7 +190,7 @@ func (o *OpenAI) ExecuteCommands(commands []string) (string, error) {
 	return allOutput, errorCmd
 }
 
-func (o *OpenAI) AddToHistory(userMessage string, aiResponse *response.Response, commandOutput string) {
+func (o *OpenAI) AddToHistory(aiResponse *response.Response, commandOutput string) {
 	lastMessage := o.Client.Messages[len(o.Client.Messages)-1]
 	o.Client.History.AddMessage(history.ClientMessage{
 		Role: lastMessage.Role,
