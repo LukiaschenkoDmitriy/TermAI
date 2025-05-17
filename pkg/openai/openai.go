@@ -7,14 +7,18 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/history"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/client"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/http/response"
+	"github.com/LukiaschenkoDmitriy/TermAI/pkg/openai/context"
 )
 
 type OpenAI struct {
 	Response *response.Response
 	Client   *client.Client
+	Context *context.Context
+	Config *config.Config
 }
 
 type OpenAIResponse struct {
@@ -27,8 +31,13 @@ type OpenAIResponse struct {
 }
 
 func New() *OpenAI {
+	config := config.New();
+	config.Load();
+
 	return &OpenAI{
 		Client: client.New(),
+		Context: context.New(),
+		Config: config,
 	}
 }
 
@@ -61,7 +70,6 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 		
 		content = strings.ReplaceAll(content, ",,", ",")
 		content = strings.ReplaceAll(content, ",\"}", "}")
-		content = strings.ReplaceAll(content, ",\"}", "}")
 		
 		if err := json.Unmarshal([]byte(content), &parsedContent); err != nil {
 			commandsStart := strings.Index(content, "\"commands\":[")
@@ -70,20 +78,31 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 			if commandsStart != -1 && commandsEnd != -1 {
 				commandsStr := content[commandsStart+11:commandsEnd+1]
 				
-				commandsStr = strings.ReplaceAll(commandsStr, "\"", "")
-				
 				var commands []string
 				var currentCmd strings.Builder
 				inQuotes := false
+				escapeNext := false
 				
 				for i := 0; i < len(commandsStr); i++ {
 					char := commandsStr[i]
 					
-					if char == '\'' {
+					if escapeNext {
+						currentCmd.WriteByte(char)
+						escapeNext = false
+						continue
+					}
+					
+					if char == '\\' {
+						escapeNext = true
+						currentCmd.WriteByte(char)
+					} else if char == '"' {
 						inQuotes = !inQuotes
 						currentCmd.WriteByte(char)
 					} else if char == ',' && !inQuotes {
-						commands = append(commands, strings.TrimSpace(currentCmd.String()))
+						cmd := strings.TrimSpace(currentCmd.String())
+						if cmd != "" {
+							commands = append(commands, cmd)
+						}
 						currentCmd.Reset()
 					} else {
 						currentCmd.WriteByte(char)
@@ -91,7 +110,10 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 				}
 				
 				if currentCmd.Len() > 0 {
-					commands = append(commands, strings.TrimSpace(currentCmd.String()))
+					cmd := strings.TrimSpace(currentCmd.String())
+					if cmd != "" {
+						commands = append(commands, cmd)
+					}
 				}
 				
 				var formattedCommands []string
@@ -111,7 +133,7 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 					}
 				}
 				
-				newContent := fmt.Sprintf(`{"answer":"","commands":[%s],"error":"","cd_to":"%s"}`, strings.Join(formattedCommands, ","), cdTo)
+				newContent := fmt.Sprintf(`{"answer":"","commands":[%s],"error":"","cd_to":"%s","finished":false,"need_user_input":false}`, strings.Join(formattedCommands, ","), cdTo)
 				log.Printf("Created new JSON: %s\n", newContent)
 				
 				if err := json.Unmarshal([]byte(newContent), &parsedContent); err != nil {
@@ -128,9 +150,16 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 
 func (o *OpenAI) ReplaceCommandsFormat(commands []string) []string {
 	for i, cmd := range commands {
-		commands[i] = strings.Replace(cmd, "echo '", "echo \"", -1)
-		commands[i] = strings.Replace(cmd, "' >", "\" >", -1)
-		commands[i] = strings.Replace(cmd, "' >>", "\" >>", -1)
+		cmd = strings.ReplaceAll(cmd, "\\'", "\\\"")
+		cmd = strings.ReplaceAll(cmd, "'", "\"")
+		
+		cmd = strings.ReplaceAll(cmd, "\\\"\\\"", "\\\"")
+		
+		cmd = strings.ReplaceAll(cmd, "echo \"", "echo '")
+		cmd = strings.ReplaceAll(cmd, "\" >", "' >")
+		cmd = strings.ReplaceAll(cmd, "\" >>", "' >>")
+		
+		commands[i] = cmd
 	}
 
 	return commands
@@ -145,7 +174,7 @@ func (o *OpenAI) ExecuteCommands(commands []string, dir string) (string, error) 
 	if len(commands) > 0 {
 		for _, cmd := range commands {
 			if strings.HasPrefix(cmd, "cd") {
-				allOutput += "System: Command 'cd ...' is not available, use 'cd_to' field to specify working directory.\n"
+				allOutput += "System: Command 'cd ...' is not available, use 'cd_to' field to specify working directory INSTEAD 'cd ...'.\n"
 				return allOutput, fmt.Errorf("command not available")
 			}
 
@@ -153,6 +182,11 @@ func (o *OpenAI) ExecuteCommands(commands []string, dir string) (string, error) 
 			if strings.HasPrefix(cmd, "*") {
 				showFullOutput = true
 				cmd = strings.TrimPrefix(cmd, "*")
+			}
+
+			cmd = strings.TrimSpace(cmd)
+			if strings.Count(cmd, "'")%2 != 0 {
+				cmd = strings.Replace(cmd, "'", "\"", -1)
 			}
 
 			execCmd := exec.Command("bash", "-c", cmd)
@@ -195,7 +229,7 @@ func (o *OpenAI) AddToHistory(aiResponse *response.Response, commandOutput strin
 	o.Client.History.AddMessage(history.ClientMessage{
 		Role: lastMessage.Role,
 		Content: lastMessage.Content,
-	}, aiResponse.Choices[0].Message, commandOutput)
+	}, aiResponse.Choices[0].Message, commandOutput, false)
 }
 
 func (o *OpenAI) AddRulesToHistoryIfNotExists(rules []string) {
@@ -206,7 +240,7 @@ func (o *OpenAI) AddRulesToHistoryIfNotExists(rules []string) {
 		}, response.Message{
 			Role: "system",
 			Content: "",
-		}, "")
+		}, "", true)
 	}
 }
 
@@ -221,4 +255,26 @@ func (o *OpenAI) HandleMoreInformation(commands []string, previousContext string
 	}
 
 	return response, nil
-} 
+}
+
+func (o *OpenAI) CropIfWindowContextIsFull() {
+	tokens := o.Context.CalculateContextTokens();
+
+	o.Context.History.Load();
+
+	fmt.Printf("TMP: %d\n", tokens);
+
+	if (tokens > o.Config.Settings.WindowContext) {
+		lastMessage, index := o.Context.GetFirstNotCroppedMessage();
+
+		responseContent, _ := o.Client.SendRequestWithoutContext([]string{strings.Join(o.Config.Settings.Rules, "\n") + fmt.Sprintf("TermAI System: Compress the entire provided text without losing any information:\n%s\n%s\n%s", lastMessage.UserMessage.Content, lastMessage.AIMessage.Content, lastMessage.CommandOutput)});
+		transformedResponse, _ := o.ProcessResponse(responseContent);
+
+		o.Client.History.Messages[index].UserMessage.Content = "TermAISystem Context: " + transformedResponse.Answer;
+		o.Client.History.Messages[index].AIMessage.Content = "";
+		o.Client.History.Messages[index].CommandOutput = "";
+		o.Client.History.Messages[index].Cropped = true;
+
+		o.Client.History.Save();
+	}
+}
