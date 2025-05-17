@@ -140,6 +140,8 @@ func (parser *CMDParser) ExecuteLogic() {
 
 	parser.openai.AddToHistory(response, allOutput)
 
+	parser.openai.CropIfWindowContextIsFull();
+
 	if (openaiResponse.NeedUserInput) {
 		return;
 	}
