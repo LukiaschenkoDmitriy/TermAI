@@ -22,6 +22,7 @@ type Message struct {
 	UserMessage ClientMessage
 	AIMessage response.Message
 	CommandOutput string
+	Cropped bool
 }
 
 func New() *History {
@@ -87,11 +88,12 @@ func (h *History) IsSystemRulesExists() bool {
 	return false
 }
 
-func (h *History) AddMessage(userMessage ClientMessage, aiMessage response.Message, commandOutput string) error {
+func (h *History) AddMessage(userMessage ClientMessage, aiMessage response.Message, commandOutput string, cropped bool) error {
 	h.Messages = append(h.Messages, Message{
 		UserMessage: userMessage,
 		AIMessage:   aiMessage,
 		CommandOutput: commandOutput,
+		Cropped: cropped,
 	})
 
 	viper.Set("history", h.Messages)
@@ -112,8 +114,17 @@ func (h *History) AddContext(context string) error {
 			Content: "",
 		},
 		CommandOutput: context,
+		Cropped: false,
 	})
 
+	viper.Set("history", h.Messages)
+	if err := viper.WriteConfigAs(h.ConfigPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *History) Save() error {
 	viper.Set("history", h.Messages)
 	if err := viper.WriteConfigAs(h.ConfigPath); err != nil {
 		return err
