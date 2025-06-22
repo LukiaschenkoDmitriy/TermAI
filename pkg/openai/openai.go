@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -46,6 +47,10 @@ func (o *OpenAI) SendMessage(message string) (*response.Response, error) {
 }
 
 func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, error) {
+	if response == nil || len(response.Choices) == 0 {
+		return OpenAIResponse{}, fmt.Errorf("invalid response: response or choices is nil")
+	}
+
 	content := response.Choices[0].Message.Content
 	content = strings.TrimPrefix(content, "```json\n")
 	content = strings.TrimSuffix(content, "\n```")
@@ -56,22 +61,27 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 		log.Printf("Failed to parse content. Error: %v\n", err)
 		log.Printf("Content that caused error: %s\n", content)
 		
+		// Try to fix common JSON issues
 		content = strings.ReplaceAll(content, "\n", " ")
 		content = strings.ReplaceAll(content, "\r", "")
 		content = strings.TrimSpace(content)
 
+		// Handle nested JSON structures
 		content = strings.ReplaceAll(content, "}\",\"answer", ",\"answer")
 		content = strings.ReplaceAll(content, "}\",\"error", ",\"error")
 		content = strings.ReplaceAll(content, "}\",\"commands", ",\"commands")
 		content = strings.ReplaceAll(content, "}\",\"cd_to", ",\"cd_to")
 		
+		// Fix array formatting
 		content = strings.ReplaceAll(content, "\"[", "[")
 		content = strings.ReplaceAll(content, "]\"", "]")
 		
+		// Clean up extra commas
 		content = strings.ReplaceAll(content, ",,", ",")
 		content = strings.ReplaceAll(content, ",\"}", "}")
 		
 		if err := json.Unmarshal([]byte(content), &parsedContent); err != nil {
+			// If still can't parse, try to extract commands manually
 			commandsStart := strings.Index(content, "\"commands\":[")
 			commandsEnd := strings.LastIndex(content, "]")
 			
@@ -101,6 +111,10 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 					} else if char == ',' && !inQuotes {
 						cmd := strings.TrimSpace(currentCmd.String())
 						if cmd != "" {
+							// Clean up the command string
+							cmd = strings.Trim(cmd, "\"")
+							cmd = strings.ReplaceAll(cmd, "\\\"", "\"")
+							cmd = strings.ReplaceAll(cmd, "\\\\", "\\")
 							commands = append(commands, cmd)
 						}
 						currentCmd.Reset()
@@ -112,29 +126,30 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 				if currentCmd.Len() > 0 {
 					cmd := strings.TrimSpace(currentCmd.String())
 					if cmd != "" {
+						// Clean up the last command string
+						cmd = strings.Trim(cmd, "\"")
+						cmd = strings.ReplaceAll(cmd, "\\\"", "\"")
+						cmd = strings.ReplaceAll(cmd, "\\\\", "\\")
 						commands = append(commands, cmd)
 					}
 				}
 				
-				var formattedCommands []string
-				for _, cmd := range commands {
-					escapedCmd := strings.ReplaceAll(cmd, "\\", "\\\\")
-					escapedCmd = strings.ReplaceAll(escapedCmd, "\"", "\\\"")
-					formattedCommands = append(formattedCommands, fmt.Sprintf("\"%s\"", escapedCmd))
-				}
-				
+				// Extract cd_to if present
 				cdTo := ""
 				if cdToStart := strings.Index(content, "\"cd_to\":"); cdToStart != -1 {
 					cdToValueStart := cdToStart + 7
 					cdToValueEnd := strings.Index(content[cdToValueStart:], "\"")
 					if cdToValueEnd != -1 {
-						cdToValueEnd = cdToValueStart + cdToValueEnd
+						cdToValueEnd = cdToStart + cdToValueEnd
 						cdTo = content[cdToValueStart:cdToValueEnd]
+						cdTo = strings.ReplaceAll(cdTo, "\\\"", "\"")
+						cdTo = strings.ReplaceAll(cdTo, "\\\\", "\\")
 					}
 				}
 				
-				newContent := fmt.Sprintf(`{"answer":"","commands":[%s],"error":"","cd_to":"%s","finished":false,"need_user_input":false}`, strings.Join(formattedCommands, ","), cdTo)
-				log.Printf("Created new JSON: %s\n", newContent)
+				// Create a new JSON with the extracted commands
+				newContent := fmt.Sprintf(`{"answer":"","commands":[%s],"error":"","cd_to":"%s","finished":false,"need_user_input":false}`, 
+					strings.Join(commands, ","), cdTo)
 				
 				if err := json.Unmarshal([]byte(newContent), &parsedContent); err != nil {
 					return OpenAIResponse{}, fmt.Errorf("failed to parse response after reconstruction: %v", err)
@@ -165,7 +180,7 @@ func (o *OpenAI) ReplaceCommandsFormat(commands []string) []string {
 	return commands
 }
 
-func (o *OpenAI) ExecuteCommands(commands []string, dir string) (string, error) {
+func (o *OpenAI) ExecuteCommands(commands []string, dir string, answer string) (string, error) {
 	var allOutput string
 	var errorCmd error
 
@@ -189,36 +204,70 @@ func (o *OpenAI) ExecuteCommands(commands []string, dir string) (string, error) 
 				cmd = strings.Replace(cmd, "'", "\"", -1)
 			}
 
-			execCmd := exec.Command("bash", "-c", cmd)
+			fmt.Printf("Executing: %s\n", cmd)
 
+			execCmd := exec.Command("bash", "-c", cmd)
 			if dir != "" {
 				execCmd.Dir = dir
 			}
 
-			output, err := execCmd.CombinedOutput()
-			
+			// Create pipes for stdout and stderr
+			stdout, err := execCmd.StdoutPipe()
 			if err != nil {
+				return allOutput, fmt.Errorf("failed to create stdout pipe: %v", err)
+			}
+			stderr, err := execCmd.StderrPipe()
+			if err != nil {
+				return allOutput, fmt.Errorf("failed to create stderr pipe: %v", err)
+			}
+
+			// Start the command
+			if err := execCmd.Start(); err != nil {
+				return allOutput, fmt.Errorf("failed to start command: %v", err)
+			}
+
+			// Create a scanner for stdout
+			stdoutScanner := bufio.NewScanner(stdout)
+			go func() {
+				for stdoutScanner.Scan() {
+					line := stdoutScanner.Text()
+					fmt.Printf("> %s\n", line)
+					allOutput += line + "\n"
+				}
+			}()
+
+			// Create a scanner for stderr
+			stderrScanner := bufio.NewScanner(stderr)
+			go func() {
+				for stderrScanner.Scan() {
+					line := stderrScanner.Text()
+					fmt.Printf("! %s\n", line)
+					allOutput += "Error: " + line + "\n"
+				}
+			}()
+
+			// Wait for the command to complete
+			if err := execCmd.Wait(); err != nil {
 				exitErr, ok := err.(*exec.ExitError)
-				errorCmd = fmt.Errorf("Error (exit code %d):\n%s\n", exitErr.ExitCode(), string(output))
 				if ok {
-					allOutput += fmt.Sprintf("Error (exit code %d):\n%s\n", exitErr.ExitCode(), string(output))
-					fmt.Printf("Error (exit code %d):\n%s\n", exitErr.ExitCode(), string(output))
+					errorCmd = fmt.Errorf("Error (exit code %d)", exitErr.ExitCode())
+					fmt.Printf("Error (exit code %d)\n", exitErr.ExitCode())
 				} else {
-					allOutput += fmt.Sprintf("Error: %v\nOutput: %s\n", err, string(output))
-					fmt.Printf("Error: %v\nOutput: %s\n", err, string(output))
+					errorCmd = fmt.Errorf("Error: %v", err)
+					fmt.Printf("Error: %v\n", err)
 				}
 				break
 			}
 
-			if len(output) > 0 {
-				if showFullOutput {
-					allOutput += fmt.Sprintf("Command output:\n%s\n", output)
-				} else {
-					allOutput += fmt.Sprintf("Command %s was successfully executed\n", cmd)
-				}
-				fmt.Printf("Output:\n%s\n", output)
+			if !showFullOutput {
+				fmt.Printf("Command %s was successfully executed\n", cmd)
 			}
 		}
+	}
+
+	// Trim output to last 3000 characters if too long
+	if len(allOutput) > 3000 {
+		allOutput = allOutput[len(allOutput)-3000:]
 	}
 
 	return allOutput, errorCmd
@@ -259,21 +308,29 @@ func (o *OpenAI) HandleMoreInformation(commands []string, previousContext string
 
 func (o *OpenAI) CropIfWindowContextIsFull() {
 	tokens := o.Context.CalculateContextTokens();
+	o.Client.History.Load();
 
 	o.Context.History.Load();
 
 	fmt.Printf("TMP: %d\n", tokens);
 
 	if (tokens > o.Config.Settings.WindowContext) {
-		lastMessage, index := o.Context.GetFirstNotCroppedMessage();
+		messages, firstIndex, lastIndex := o.Context.GetNotCoppedMessageByTokens(o.Config.Settings.WindowContext);
+		lastMessage := o.Context.ConvertMessagesToOneMessage(messages);
+
+		if (firstIndex == -1 && lastIndex == -1) {
+			return;
+		}
+
+		o.Client.History.DeleteByIndexRange(firstIndex + 1, lastIndex);
 
 		responseContent, _ := o.Client.SendRequestWithoutContext([]string{strings.Join(o.Config.Settings.Rules, "\n") + fmt.Sprintf("TermAI System: Compress the entire provided text without losing any information:\n%s\n%s\n%s", lastMessage.UserMessage.Content, lastMessage.AIMessage.Content, lastMessage.CommandOutput)});
 		transformedResponse, _ := o.ProcessResponse(responseContent);
 
-		o.Client.History.Messages[index].UserMessage.Content = "TermAISystem Context: " + transformedResponse.Answer;
-		o.Client.History.Messages[index].AIMessage.Content = "";
-		o.Client.History.Messages[index].CommandOutput = "";
-		o.Client.History.Messages[index].Cropped = true;
+		o.Client.History.Messages[firstIndex].UserMessage.Content = "TermAISystem Context: " + transformedResponse.Answer;
+		o.Client.History.Messages[firstIndex].AIMessage.Content = "";
+		o.Client.History.Messages[firstIndex].CommandOutput = "";
+		o.Client.History.Messages[firstIndex].Cropped = true;
 
 		o.Client.History.Save();
 	}

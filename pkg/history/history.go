@@ -88,6 +88,26 @@ func (h *History) IsSystemRulesExists() bool {
 	return false
 }
 
+func (h *History) DeleteByIndex(index int) error {
+	h.Messages = append(h.Messages[:index], h.Messages[index+1:]...)
+
+	viper.Set("history", h.Messages)
+	if err := viper.WriteConfigAs(h.ConfigPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *History) DeleteByIndexRange(firstIndex int, lastIndex int) error {
+	h.Messages = append(h.Messages[:firstIndex], h.Messages[lastIndex+1:]...)
+
+	viper.Set("history", h.Messages)
+	if err := viper.WriteConfigAs(h.ConfigPath); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (h *History) AddMessage(userMessage ClientMessage, aiMessage response.Message, commandOutput string, cropped bool) error {
 	h.Messages = append(h.Messages, Message{
 		UserMessage: userMessage,

@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/config"
 	"github.com/LukiaschenkoDmitriy/TermAI/pkg/history"
@@ -120,7 +121,9 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 func (parser *CMDParser) ExecuteLogic() {
 	parser.openai.AddRulesToHistoryIfNotExists(parser.Config.Settings.Rules)
 
-	response, err := parser.openai.SendMessage(parser.LastMessage)
+	cmdDir, _ := os.Getwd();
+
+	response, err := parser.openai.SendMessage("System: Execute Commands in directory: " + cmdDir + "\n" + parser.LastMessage)
 	if err != nil {
 		log.Fatalf("Failed to send request: %v", err)
 	}
@@ -136,7 +139,7 @@ func (parser *CMDParser) ExecuteLogic() {
 
 	fmt.Println("[TermAI]: " + openaiResponse.Answer)
 
-	allOutput, err := parser.openai.ExecuteCommands(openaiResponse.Commands, openaiResponse.CDTo)
+	allOutput, err := parser.openai.ExecuteCommands(openaiResponse.Commands, openaiResponse.CDTo, openaiResponse.Answer);
 
 	parser.openai.AddToHistory(response, allOutput)
 
