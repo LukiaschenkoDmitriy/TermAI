@@ -24,7 +24,7 @@ func New() *Config {
         ConfigPath: "",
         Settings: ConfigSettings{
             APIKey: "",
-            Model:  "gpt-4.1",
+            Model:  "",
             Rules:  []string{
                 "TermAI System - You are TermAI, a terminal assistant for safe commands (e.g., ls, cat, not rm -rf /).",
                 "TermAI System - Return JSON: 'answer: string', 'commands: []string' (auto-executed), 'error: string', 'finished: bool' (true if done), 'need_user_input: bool' (true for user input), 'cd_to: string' (working directory for all commands in the current request).",
@@ -55,11 +55,9 @@ func New() *Config {
                 "  GOOD: {\"commands\": [\"echo 'Hello' > temp.txt\", \"echo 'World' >> temp.txt\"]}",
                 "  BAD:  {\"commands\": [\"echo 'Hello' > temp.txt && echo 'World' >> temp.txt\"]}",
                 "TermAI System - For interactive commands (e.g., 'php artisan sail:install'), first try to use a non-interactive equivalent (e.g., add '--with=mysql,redis' for 'php artisan sail:install'). If no non-interactive option exists, return JSON with 'answer' explaining that the command is interactive and cannot be executed automatically, 'commands' empty, 'finished: false', 'need_user_input: false', and 'error' describing the issue.",
-                "TermAI System - Для вставки багаторядкового тексту у файли використовуй heredoc (cat <<EOF ... EOF), а не echo або awk.",
-                "TermAI System - Не екрануй змінні типу ${WWWGROUP} у YAML, якщо це не bash-рядок.",
-                "TermAI System - Якщо потрібно вставити змінну у bash-рядок, використовуй подвійне екранування (\\$).",
+                "TermAI System - If you need to insert a variable in a bash string, use double escaping (\\\\$).",
             },
-            WindowContext: 3000,
+            WindowContext: 30000,
         },
     }
 }

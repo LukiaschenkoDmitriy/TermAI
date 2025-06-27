@@ -93,6 +93,7 @@ func (parser *CMDParser) ConfigRun(cmd *cobra.Command, args []string) {
 		fmt.Printf("\nCurrent settings:\n")
 		fmt.Printf("API Key: %s\n", cfg.Settings.APIKey)
 		fmt.Printf("Model: %s\n", cfg.Settings.Model)
+		fmt.Println("Available models: openai, deepseek-chat")
 	}
 }
 
@@ -119,6 +120,11 @@ func (parser *CMDParser) ExecuteRun(cmd *cobra.Command, args []string) {
 }
 
 func (parser *CMDParser) ExecuteLogic() {
+
+	if (parser.NotModelNotApiKeyException()) {
+		return;
+	}
+	
 	parser.openai.AddRulesToHistoryIfNotExists(parser.Config.Settings.Rules)
 
 	cmdDir, _ := os.Getwd();
@@ -141,6 +147,10 @@ func (parser *CMDParser) ExecuteLogic() {
 
 	allOutput, err := parser.openai.ExecuteCommands(openaiResponse.Commands, openaiResponse.CDTo, openaiResponse.Answer);
 
+	if (len(allOutput) > 15000) {
+		allOutput = allOutput[:15000];
+	}
+
 	parser.openai.AddToHistory(response, allOutput)
 
 	parser.openai.CropIfWindowContextIsFull();
@@ -160,6 +170,23 @@ func (parser *CMDParser) ExecuteLogic() {
 		parser.ExecuteLogic()
 		return
 	}
+}
+
+func (parser *CMDParser) NotModelNotApiKeyException() bool {
+
+	parser.Config.Load();
+
+	if (parser.Config.Settings.Model == "") {
+		fmt.Println("[TermAI]: Model is not set. Please set it using the 'config', 'termai config --model=model_name' command. More information 'termai config'")
+		return true;
+	}
+
+	if (parser.Config.Settings.APIKey == "") {
+		fmt.Println("[TermAI]: API key is not set. Please set it using the 'config', 'termai config --api_key=api_key' command. More information 'termai config'")
+		return true;
+	}
+
+	return false;
 }
 
 func (parser *CMDParser) Execute() error {

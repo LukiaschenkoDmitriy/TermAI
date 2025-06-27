@@ -60,104 +60,8 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 	if err := json.Unmarshal([]byte(content), &parsedContent); err != nil {
 		log.Printf("Failed to parse content. Error: %v\n", err)
 		log.Printf("Content that caused error: %s\n", content)
-		
-		// Try to fix common JSON issues
-		content = strings.ReplaceAll(content, "\n", " ")
-		content = strings.ReplaceAll(content, "\r", "")
-		content = strings.TrimSpace(content)
 
-		// Handle nested JSON structures
-		content = strings.ReplaceAll(content, "}\",\"answer", ",\"answer")
-		content = strings.ReplaceAll(content, "}\",\"error", ",\"error")
-		content = strings.ReplaceAll(content, "}\",\"commands", ",\"commands")
-		content = strings.ReplaceAll(content, "}\",\"cd_to", ",\"cd_to")
-		
-		// Fix array formatting
-		content = strings.ReplaceAll(content, "\"[", "[")
-		content = strings.ReplaceAll(content, "]\"", "]")
-		
-		// Clean up extra commas
-		content = strings.ReplaceAll(content, ",,", ",")
-		content = strings.ReplaceAll(content, ",\"}", "}")
-		
-		if err := json.Unmarshal([]byte(content), &parsedContent); err != nil {
-			// If still can't parse, try to extract commands manually
-			commandsStart := strings.Index(content, "\"commands\":[")
-			commandsEnd := strings.LastIndex(content, "]")
-			
-			if commandsStart != -1 && commandsEnd != -1 {
-				commandsStr := content[commandsStart+11:commandsEnd+1]
-				
-				var commands []string
-				var currentCmd strings.Builder
-				inQuotes := false
-				escapeNext := false
-				
-				for i := 0; i < len(commandsStr); i++ {
-					char := commandsStr[i]
-					
-					if escapeNext {
-						currentCmd.WriteByte(char)
-						escapeNext = false
-						continue
-					}
-					
-					if char == '\\' {
-						escapeNext = true
-						currentCmd.WriteByte(char)
-					} else if char == '"' {
-						inQuotes = !inQuotes
-						currentCmd.WriteByte(char)
-					} else if char == ',' && !inQuotes {
-						cmd := strings.TrimSpace(currentCmd.String())
-						if cmd != "" {
-							// Clean up the command string
-							cmd = strings.Trim(cmd, "\"")
-							cmd = strings.ReplaceAll(cmd, "\\\"", "\"")
-							cmd = strings.ReplaceAll(cmd, "\\\\", "\\")
-							commands = append(commands, cmd)
-						}
-						currentCmd.Reset()
-					} else {
-						currentCmd.WriteByte(char)
-					}
-				}
-				
-				if currentCmd.Len() > 0 {
-					cmd := strings.TrimSpace(currentCmd.String())
-					if cmd != "" {
-						// Clean up the last command string
-						cmd = strings.Trim(cmd, "\"")
-						cmd = strings.ReplaceAll(cmd, "\\\"", "\"")
-						cmd = strings.ReplaceAll(cmd, "\\\\", "\\")
-						commands = append(commands, cmd)
-					}
-				}
-				
-				// Extract cd_to if present
-				cdTo := ""
-				if cdToStart := strings.Index(content, "\"cd_to\":"); cdToStart != -1 {
-					cdToValueStart := cdToStart + 7
-					cdToValueEnd := strings.Index(content[cdToValueStart:], "\"")
-					if cdToValueEnd != -1 {
-						cdToValueEnd = cdToStart + cdToValueEnd
-						cdTo = content[cdToValueStart:cdToValueEnd]
-						cdTo = strings.ReplaceAll(cdTo, "\\\"", "\"")
-						cdTo = strings.ReplaceAll(cdTo, "\\\\", "\\")
-					}
-				}
-				
-				// Create a new JSON with the extracted commands
-				newContent := fmt.Sprintf(`{"answer":"","commands":[%s],"error":"","cd_to":"%s","finished":false,"need_user_input":false}`, 
-					strings.Join(commands, ","), cdTo)
-				
-				if err := json.Unmarshal([]byte(newContent), &parsedContent); err != nil {
-					return OpenAIResponse{}, fmt.Errorf("failed to parse response after reconstruction: %v", err)
-				}
-			} else {
-				return OpenAIResponse{}, fmt.Errorf("failed to find commands in response")
-			}
-		}
+		return OpenAIResponse{}, err;
 	}
 
 	return parsedContent, nil
@@ -165,14 +69,7 @@ func (o *OpenAI) ProcessResponse(response *response.Response) (OpenAIResponse, e
 
 func (o *OpenAI) ReplaceCommandsFormat(commands []string) []string {
 	for i, cmd := range commands {
-		cmd = strings.ReplaceAll(cmd, "\\'", "\\\"")
-		cmd = strings.ReplaceAll(cmd, "'", "\"")
-		
-		cmd = strings.ReplaceAll(cmd, "\\\"\\\"", "\\\"")
-		
-		cmd = strings.ReplaceAll(cmd, "echo \"", "echo '")
-		cmd = strings.ReplaceAll(cmd, "\" >", "' >")
-		cmd = strings.ReplaceAll(cmd, "\" >>", "' >>")
+		cmd = strings.ReplaceAll(cmd, "\\$", "$")
 		
 		commands[i] = cmd
 	}
@@ -265,9 +162,9 @@ func (o *OpenAI) ExecuteCommands(commands []string, dir string, answer string) (
 		}
 	}
 
-	// Trim output to last 3000 characters if too long
-	if len(allOutput) > 3000 {
-		allOutput = allOutput[len(allOutput)-3000:]
+	// Trim output to last 15000 characters if too long
+	if len(allOutput) > 15000 {
+		allOutput = allOutput[len(allOutput)-15000:]
 	}
 
 	return allOutput, errorCmd

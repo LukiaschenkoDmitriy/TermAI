@@ -35,6 +35,7 @@ type Client struct {
 
 const (
 	OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+	DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 )
 
 func New() *Client {
@@ -105,7 +106,12 @@ func (c *Client) SendRequestWithoutContext(messages []string) (*response.Respons
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", OPENAI_URL, bytes.NewBuffer(jsonBody))
+	url := OPENAI_URL
+	if c.Model == "deepseek-chat" {
+		url = DEEPSEEK_URL
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +150,12 @@ func (c *Client) SendRequest(messages []string) (*response.Response, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", OPENAI_URL, bytes.NewBuffer(jsonBody))
+	url := OPENAI_URL;
+	if c.Model == "deepseek-chat" {
+		url = DEEPSEEK_URL
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
